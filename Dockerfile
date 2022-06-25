@@ -33,19 +33,23 @@ FROM python:3.8-slim
 ARG CRYPTOGRAPHY_DONT_BUILD_RUST=1
 
 # Re #93, #73, excluding rustc (adds another 430Mb~)
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    libssl-dev \
-    libffi-dev \
-    gcc \
-    libc-dev \
-    libxslt-dev \
-    zlib1g-dev \
-    g++
+RUN set -ex; \
+    apt-get update && apt-get install -y --no-install-recommends \
+        g++ \
+        gcc \
+        gosu \
+        libc-dev \
+        libffi-dev \
+        libssl-dev \
+        libxslt-dev \
+        zlib1g-dev && \
+    rm -rf /var/lib/apt/lists/*; \
+    useradd -u 911 -U -d /datastore -s /bin/false abc && \
+    usermod -G users abc; \
+    mkdir -p /datastore
 
 # https://stackoverflow.com/questions/58701233/docker-logs-erroneously-appears-empty-until-container-stops
 ENV PYTHONUNBUFFERED=1
-
-RUN [ ! -d "/datastore" ] && mkdir /datastore
 
 # Re #80, sets SECLEVEL=1 in openssl.conf to allow monitoring sites with weak/old cipher suites
 RUN sed -i 's/^CipherString = .*/CipherString = DEFAULT@SECLEVEL=1/' /etc/ssl/openssl.cnf
@@ -56,6 +60,10 @@ ENV PYTHONPATH=/usr/local
 
 EXPOSE 5000
 
+# The entrypoint script handling PUID/PGID and permissions
+COPY docker-entrypoint.sh /app/docker-entrypoint.sh
+RUN chmod u+x /app/docker-entrypoint.sh
+
 # The actual flask app
 COPY changedetectionio /app/changedetectionio
 # The eventlet server wrapper
@@ -63,4 +71,4 @@ COPY changedetection.py /app/changedetection.py
 
 WORKDIR /app
 
-CMD [ "python", "./changedetection.py" , "-d", "/datastore"]
+CMD ["/app/docker-entrypoint.sh"]
