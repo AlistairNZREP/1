@@ -44,8 +44,8 @@ RUN set -ex; \
         libxslt-dev \
         zlib1g-dev && \
     rm -rf /var/lib/apt/lists/*; \
-    useradd -u 911 -U -d /datastore -s /bin/false abc && \
-    usermod -G users abc; \
+    useradd -u 911 -U -d /datastore -s /bin/false changedetection && \
+    usermod -G users changedetection; \
     mkdir -p /datastore
 
 # https://stackoverflow.com/questions/58701233/docker-logs-erroneously-appears-empty-until-container-stops
@@ -62,7 +62,7 @@ EXPOSE 5000
 
 # The entrypoint script handling PUID/PGID and permissions
 COPY docker-entrypoint.sh /app/docker-entrypoint.sh
-RUN chmod u+x /app/docker-entrypoint.sh
+RUN chmod 777 /app/docker-entrypoint.sh
 
 # The actual flask app
 COPY changedetectionio /app/changedetectionio
@@ -71,4 +71,5 @@ COPY changedetection.py /app/changedetection.py
 
 WORKDIR /app
 
-CMD ["/app/docker-entrypoint.sh"]
+ENTRYPOINT ["/app/docker-entrypoint.sh"]
+CMD ["python", "./changedetection.py", "-d", "/datastore"]
