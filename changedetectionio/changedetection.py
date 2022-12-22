@@ -2,16 +2,32 @@
 
 # Launch as a eventlet.wsgi server instance.
 
-import getopt
-import os
-import sys
-
+from distutils.util import strtobool
 import eventlet
 import eventlet.wsgi
+import getopt
+import os
+import signal
+import sys
+
 from . import store, changedetection_app, content_fetcher
 from . import __version__
 
+# Only global so we can access it in the signal handler
+app = None
+datastore = None
+
+def sigterm_handler(_signo, _stack_frame):
+    global app
+    global datastore
+#    app.config.exit.set()
+    print('Shutdown: Got SIGTERM, DB saved to disk')
+    datastore.sync_to_json()
+#    raise SystemExit
+
 def main():
+    global datastore
+    global app
     ssl_mode = False
     host = ''
     port = os.environ.get('PORT') or 5000
@@ -35,11 +51,6 @@ def main():
     create_datastore_dir = False
 
     for opt, arg in opts:
-        #        if opt == '--clear-all-history':
-        # Remove history, the actual files you need to delete manually.
-        #            for uuid, watch in datastore.data['watching'].items():
-        #                watch.update({'history': {}, 'last_checked': 0, 'last_changed': 0, 'previous_md5': None})
-
         if opt == '-s':
             ssl_mode = True
 
@@ -72,8 +83,11 @@ def main():
                 "Or use the -C parameter to create the directory.".format(app_config['datastore_path']), file=sys.stderr)
             sys.exit(2)
 
+
     datastore = store.ChangeDetectionStore(datastore_path=app_config['datastore_path'], version_tag=__version__)
     app = changedetection_app(app_config, datastore)
+
+    signal.signal(signal.SIGTERM, sigterm_handler)
 
     # Go into cleanup mode
     if do_cleanup:
@@ -88,6 +102,15 @@ def main():
                     new_version_available=app.config['NEW_VERSION_AVAILABLE'],
                     has_password=datastore.data['settings']['application']['password'] != False
                     )
+
+    # Monitored websites will not receive a Referer header when a user clicks on an outgoing link.
+    # @Note: Incompatible with password login (and maybe other features) for now, submit a PR!
+    @app.after_request
+    def hide_referrer(response):
+        if strtobool(os.getenv("HIDE_REFERER", 'false')):
+            response.headers["Referrer-Policy"] = "no-referrer"
+
+        return response
 
     # Proxy sub-directory support
     # Set environment var USE_X_SETTINGS=1 on this script
@@ -110,5 +133,4 @@ def main():
 
     else:
         eventlet.wsgi.server(eventlet.listen((host, int(port))), app)
-
 

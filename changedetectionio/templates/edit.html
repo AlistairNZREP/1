@@ -7,24 +7,34 @@
     const notification_base_url="{{url_for('ajax_callback_send_notification_test')}}";
     const watch_visual_selector_data_url="{{url_for('static_content', group='visual_selector_data', filename=uuid)}}";
     const screenshot_url="{{url_for('static_content', group='screenshot', filename=uuid)}}";
+    const playwright_enabled={% if playwright_enabled %} true {% else %} false {% endif %};
 
 {% if emailprefix %}
     const email_notification_prefix=JSON.parse('{{ emailprefix|tojson }}');
 {% endif %}
 
+    const browser_steps_config=JSON.parse('{{ browser_steps_config|tojson }}');
+    const browser_steps_sync_url="{{url_for('browser_steps.browsersteps_ui_update', uuid=uuid)}}";
 </script>
+
 <script type="text/javascript" src="{{url_for('static_content', group='js', filename='watch-settings.js')}}" defer></script>
+<script type="text/javascript" src="{{url_for('static_content', group='js', filename='limit.js')}}" defer></script>
 <script type="text/javascript" src="{{url_for('static_content', group='js', filename='notifications.js')}}" defer></script>
 <script type="text/javascript" src="{{url_for('static_content', group='js', filename='visual-selector.js')}}" defer></script>
-<script type="text/javascript" src="{{url_for('static_content', group='js', filename='limit.js')}}" defer></script>
+{% if playwright_enabled %}
+<script type="text/javascript" src="{{url_for('static_content', group='js', filename='browser-steps.js')}}" defer></script>
+{% endif %}
 
 <div class="edit-form monospaced-textarea">
 
     <div class="tabs collapsable">
         <ul>
-            <li class="tab" id="default-tab"><a href="#general">General</a></li>
+            <li class="tab" id=""><a href="#general">General</a></li>
             <li class="tab"><a href="#request">Request</a></li>
-            <li class="tab"><a id="visualselector-tab" href="#visualselector">Visual Selector</a></li>
+            {% if playwright_enabled %}
+            <li class="tab"><a id="browsersteps-tab" href="#browser-steps">Browser Steps</a></li>
+            {% endif %}
+            <li class="tab"><a id="visualselector-tab" href="#visualselector">Visual Filter Selector</a></li>
             <li class="tab"><a href="#filters-and-triggers">Filters &amp; Triggers</a></li>
             <li class="tab"><a href="#notifications">Notifications</a></li>
         </ul>
@@ -32,14 +42,15 @@
 
     <div class="box-wrap inner">
         <form class="pure-form pure-form-stacked"
-              action="{{ url_for('edit_page', uuid=uuid, next = request.args.get('next') ) }}" method="POST">
+              action="{{ url_for('edit_page', uuid=uuid, next = request.args.get('next'), unpause_on_save = request.args.get('unpause_on_save')) }}" method="POST">
              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
 
             <div class="tab-pane-inner" id="general">
                 <fieldset>
                     <div class="pure-control-group">
                         {{ render_field(form.url, placeholder="https://...", required=true, class="m-d") }}
-                        <span class="pure-form-message-inline">Some sites use JavaScript to create the content, for this you should <a href="https://github.com/dgtlmoon/changedetection.io/wiki/Fetching-pages-with-WebDriver">use the Chrome/WebDriver Fetcher</a></span>
+                        <span class="pure-form-message-inline">Some sites use JavaScript to create the content, for this you should <a href="https://github.com/dgtlmoon/changedetection.io/wiki/Fetching-pages-with-WebDriver">use the Chrome/WebDriver Fetcher</a></span><br/>
+                        <span class="pure-form-message-inline">You can use variables in the URL, perfect for inserting the current date and other logic, <a href="https://github.com/dgtlmoon/changedetection.io/wiki/Handling-variables-in-the-watched-URL">help and examples here</a></span><br/>
                     </div>
                     <div class="pure-control-group">
                         {{ render_field(form.title, class="m-d") }}
@@ -61,6 +72,12 @@
                     <div class="pure-control-group">
                         {{ render_checkbox_field(form.extract_title_as_title) }}
                     </div>
+                    <div class="pure-control-group">
+                        {{ render_checkbox_field(form.filter_failure_notification_send) }}
+                        <span class="pure-form-message-inline">
+                         Sends a notification when the filter can no longer be seen on the page, good for knowing when the page changed and your filter will not work anymore.
+                        </span>
+                    </div>
                 </fieldset>
             </div>
 
@@ -70,6 +87,7 @@
                         <span class="pure-form-message-inline">
                             <p>Use the <strong>Basic</strong> method (default) where your watched site doesn't need Javascript to render.</p>
                             <p>The <strong>Chrome/Javascript</strong> method requires a network connection to a running WebDriver+Chrome server, set by the ENV var 'WEBDRIVER_URL'. </p>
+                            Tip: <a href="https://github.com/dgtlmoon/changedetection.io/wiki/Proxy-configuration#brightdata-proxy-support">Connect using BrightData Proxies, find out more here.</a>
                         </span>
                     </div>
                 {% if form.proxy %}
@@ -80,34 +98,43 @@
                         </span>
                     </div>
                 {% endif %}
-                <fieldset id="webdriver-override-options">
-                    <div class="pure-form-message-inline">
-                        <strong>If you're having trouble waiting for the page to be fully rendered (text missing etc), try increasing the 'wait' time here.</strong>
-                        <br/>
-                        This will wait <i>n</i> seconds before extracting the text.
+                    <div  class="pure-control-group inline-radio">
+                        {{ render_checkbox_field(form.ignore_status_codes) }}
                     </div>
+                <fieldset id="webdriver-override-options">
                     <div class="pure-control-group">
                         {{ render_field(form.webdriver_delay) }}
+                        <div class="pure-form-message-inline">
+                            <strong>If you're having trouble waiting for the page to be fully rendered (text missing etc), try increasing the 'wait' time here.</strong>
+                            <br/>
+                            This will wait <i>n</i> seconds before extracting the text.
+                            {% if using_global_webdriver_wait %}
+                            <br/><strong>Using the current global default settings</strong>
+                            {% endif %}
+                        </div>
                     </div>
-                    {% if using_global_webdriver_wait %}
-                    <div class="pure-form-message-inline">
-                        <strong>Using the current global default settings</strong>
+                    <div class="pure-control-group">
+                        {{ render_field(form.webdriver_js_execute_code) }}
+                        <div class="pure-form-message-inline">
+                            Run this code before performing change detection, handy for filling in fields and other actions <a href="https://github.com/dgtlmoon/changedetection.io/wiki/Run-JavaScript-before-change-detection">More help and examples here</a>
+                        </div>
                     </div>
-                    {% endif %}
                 </fieldset>
                 <fieldset class="pure-group" id="requests-override-options">
-                    <div class="pure-form-message-inline">
-                        <strong>Request override is currently only used by the <i>Basic fast Plaintext/HTTP Client</i> method.</strong>
-                    </div>
-                    <div class="pure-control-group">
+                    {% if not playwright_enabled %}
+                        <div class="pure-form-message-inline">
+                            <strong>Request override is currently only used by the <i>Basic fast Plaintext/HTTP Client</i> method.</strong>
+                        </div>
+                    {% endif %}
+                    <div class="pure-control-group" id="request-method">
                         {{ render_field(form.method) }}
                     </div>
-                    <div class="pure-control-group">
+                    <div class="pure-control-group" id="request-headers">
 {{ render_field(form.headers, rows=5, placeholder="Example
 Cookie: foobar
 User-Agent: wonderbra 1.0") }}
                     </div>
-                    <div class="pure-control-group">
+                    <div class="pure-control-group" id="request-body">
                                         {{ render_field(form.body, rows=5, placeholder="Example
 {
    \"name\":\"John\",
@@ -115,18 +142,74 @@ User-Agent: wonderbra 1.0") }}
    \"car\":null
 }") }}
                     </div>
-                    <div>
-                        {{ render_checkbox_field(form.ignore_status_codes) }}
+                </fieldset>
+            </div>
+            {% if playwright_enabled %}
+            <div class="tab-pane-inner" id="browser-steps">
+                <img class="beta-logo" src="{{url_for('static_content', group='images', filename='beta-logo.png')}}">
+                <fieldset>
+                    <div class="pure-control-group">
+                        <!--
+                        Too hard right now, better to just send the events to the fetcher for now and leave it in the final screenshot
+                        and/or report an error
+                        <a id="play-steps" class="pure-button button-secondary button-xsmall" style="font-size: 70%">Play steps  ▶</a>
+                        -->
+
+                        <!---  Do this later -->
+                        <div class="checkbox" style="display: none;">
+                            <input type=checkbox id="include_text_elements" > <label for="include_text_elements">Turn on text finder</label>
+                        </div>
+
+                        <div id="loading-status-text" style="display: none;">Please wait, first browser step can take a little time to load..<div class="spinner"></div></div>
+                        <div class="flex-wrapper" >
+
+                            <div id="browser-steps-ui" class="noselect"  style="width: 100%; background-color: #eee; border-radius: 5px;">
+
+                                <div class="noselect"  id="browsersteps-selector-wrapper" style="width: 100%">
+                                    <span class="loader" >
+                                        <span id="browsersteps-click-start">
+                                            <h2 >Click here to Start</h2>
+                                            Please allow 10-15 seconds for the browser to connect.
+                                        </span>
+                                        <div class="spinner"  style="display: none;"></div>
+                                    </span>
+                                    <img  class="noselect" id="browsersteps-img" src="" style="max-width: 100%; width: 100%;" />
+                                    <canvas  class="noselect" id="browsersteps-selector-canvas" style="max-width: 100%; width: 100%;"></canvas>
+                                </div>
+                            </div>
+                            <div id="browser-steps-fieldlist" style="padding-left: 1em;  width: 350px; font-size: 80%;" >
+                                <span id="browserless-seconds-remaining">Loading</span> <span style="font-size: 80%;"> (<a target=_new href="https://github.com/dgtlmoon/changedetection.io/pull/478/files#diff-1a79d924d1840c485238e66772391268a89c95b781d69091384cf1ea1ac146c9R4">?</a>) </span>
+                                {{ render_field(form.browser_steps) }}
+                            </div>
+                        </div>
                     </div>
                 </fieldset>
-                <br/>
             </div>
+            {% endif %}
 
             <div class="tab-pane-inner" id="notifications">
-                <strong>Note: <i>These settings override the global settings for this watch.</i></strong>
                 <fieldset>
-                    <div class="field-group">
-                        {{ render_common_settings_form(form, current_base_url, emailprefix) }}
+                    <div  class="pure-control-group inline-radio">
+                      {{ render_checkbox_field(form.notification_muted) }}
+                    </div>
+                    {% if is_html_webdriver %}
+                    <div class="pure-control-group inline-radio">
+                      {{ render_checkbox_field(form.notification_screenshot) }}
+                        <span class="pure-form-message-inline">
+                            <strong>Use with caution!</strong> This will easily fill up your email storage quota or flood other storages.
+                        </span>
+                    </div>
+                    {% endif %}
+                    <div class="field-group" id="notification-field-group">
+                        {% if has_default_notification_urls %}
+                        <div class="inline-warning">
+                            <img class="inline-warning-icon" src="{{url_for('static_content', group='images', filename='notice.svg')}}" alt="Look out!" title="Lookout!"/>
+                            There are <a href="{{ url_for('settings_page')}}#notifications">system-wide notification URLs enabled</a>, this form will override notification settings for this watch only &dash; an empty Notification URL list here will still send notifications.
+                        </div>
+                        {% endif %}
+                        <a href="#notifications" id="notification-setting-reset-to-default" class="pure-button button-xsmall" style="right: 20px; top: 20px; position: absolute; background-color: #5f42dd; border-radius: 4px; font-size: 70%; color: #fff">Use system defaults</a>
+
+                        {{ render_common_settings_form(form, emailprefix, settings_application) }}
                     </div>
                 </fieldset>
             </div>
@@ -143,18 +226,46 @@ User-Agent: wonderbra 1.0") }}
                                 </li>
                             </ul>
                     </div>
+                    <fieldset>
+                        <div class="pure-control-group">
+                            {{ render_checkbox_field(form.check_unique_lines) }}
+                            <span class="pure-form-message-inline">Good for websites that just move the content around, and you want to know when NEW content is added, compares new lines against all history for this watch.</span>
+                        </div>
+                    </fieldset>
                     <div class="pure-control-group">
-                        {{ render_field(form.css_filter, placeholder=".class-name or #some-id, or other CSS selector rule.",
-                        class="m-d") }}
-                        <span class="pure-form-message-inline">
+                        {% set field = render_field(form.include_filters,
+                            rows=5,
+                            placeholder="#example
+xpath://body/div/span[contains(@class, 'example-class')]",
+                            class="m-d")
+                        %}
+                        {{ field }}
+                        {% if '/text()' in  field %}
+                          <span class="pure-form-message-inline"><strong>Note!: //text() function does not work where the &lt;element&gt; contains &lt;![CDATA[]]&gt;</strong></span><br/>
+                        {% endif %}
+                        <span class="pure-form-message-inline">One rule per line, <i>any</i> rules that matches will be used.<br/>
+
                     <ul>
                         <li>CSS - Limit text to this CSS rule, only text matching this CSS rule is included.</li>
-                        <li>JSON - Limit text to this JSON rule, using <a href="https://pypi.org/project/jsonpath-ng/">JSONPath</a>, prefix with <code>"json:"</code>, use <code>json:$</code> to force re-formatting if required,  <a
-                                href="https://jsonpath.com/" target="new">test your JSONPath here</a></li>
-                        <li>XPath - Limit text to this XPath rule, simply start with a forward-slash, example  <code>//*[contains(@class, 'sametext')]</code> or <code>xpath://*[contains(@class, 'sametext')]</code>, <a
+                        <li>JSON - Limit text to this JSON rule, using either <a href="https://pypi.org/project/jsonpath-ng/" target="new">JSONPath</a> or <a href="https://stedolan.github.io/jq/" target="new">jq</a> (if installed).
+                            <ul>
+                                <li>JSONPath: Prefix with <code>json:</code>, use <code>json:$</code> to force re-formatting if required,  <a href="https://jsonpath.com/" target="new">test your JSONPath here</a>.</li>
+                                {% if jq_support %}
+                                <li>jq: Prefix with <code>jq:</code> and <a href="https://jqplay.org/" target="new">test your jq here</a>. Using <a href="https://stedolan.github.io/jq/" target="new">jq</a> allows for complex filtering and processing of JSON data with built-in functions, regex, filtering, and more. See examples and documentation <a href="https://stedolan.github.io/jq/manual/" target="new">here</a>.</li>
+                                {% else %}
+                                <li>jq support not installed</li>
+                                {% endif %}
+                            </ul>
+                        </li>
+                        <li>XPath - Limit text to this XPath rule, simply start with a forward-slash,
+                            <ul>
+                                <li>Example:  <code>//*[contains(@class, 'sametext')]</code> or <code>xpath://*[contains(@class, 'sametext')]</code>, <a
                                 href="http://xpather.com/" target="new">test your XPath here</a></li>
+                                <li>Example: Get all titles from an RSS feed <code>//title/text()</code></li>
+                            </ul>
+                            </li>
                     </ul>
-                    Please be sure that you thoroughly understand how to write CSS or JSONPath, XPath selector rules before filing an issue on GitHub! <a
+                    Please be sure that you thoroughly understand how to write CSS, JSONPath, XPath{% if jq_support %}, or jq selector{%endif%} rules before filing an issue on GitHub! <a
                                 href="https://github.com/dgtlmoon/changedetection.io/wiki/CSS-Selector-help">here for more CSS selector help</a>.<br/>
                 </span>
                     </div>
@@ -177,7 +288,7 @@ nav
                     <span class="pure-form-message-inline">
                         <ul>
                             <li>Each line processed separately, any line matching will be ignored (removed before creating the checksum)</li>
-                            <li>Regular Expression support, wrap the line in forward slash <code>/regex/</code></li>
+                            <li>Regular Expression support, wrap the entire line in forward slash <code>/regex/</code></li>
                             <li>Changing this will affect the comparison checksum which may trigger an alert</li>
                             <li>Use the preview/show current tab to see ignores</li>
                         </ul>
@@ -220,8 +331,15 @@ Unavailable") }}
                         {{ render_field(form.extract_text, rows=5, placeholder="\d+ online") }}
                         <span class="pure-form-message-inline">
                     <ul>
-                        <li>Extracts text in the final output after other filters using regular expressions, for example <code>\d+ online</code></li>
-                        <li>One line per regular-expression.</li>
+                        <li>Extracts text in the final output (line by line) after other filters using regular expressions;
+                            <ul>
+                                <li>Regular expression &dash; example <code>/reports.+?2022/i</code></li>
+                                <li>Use <code>//(?aiLmsux))</code> type flags (more <a href="https://docs.python.org/3/library/re.html#index-15">information here</a>)<br/></li>
+                                <li>Keyword example &dash; example <code>Out of stock</code></li>
+                                <li>Use groups to extract just that text &dash; example <code>/reports.+?(\d+)/i</code> returns a list of years only</li>
+                            </ul>
+                        </li>
+                        <li>One line per regular-expression/ string match</li>
                     </ul>
                         </span>
                     </div>
@@ -229,39 +347,32 @@ Unavailable") }}
             </div>
 
             <div class="tab-pane-inner visual-selector-ui" id="visualselector">
-                <img id="beta-logo" src="{{url_for('static_content', group='images', filename='beta-logo.png')}}">
+                <img class="beta-logo" src="{{url_for('static_content', group='images', filename='beta-logo.png')}}">
 
                 <fieldset>
                     <div class="pure-control-group">
                         {% if visualselector_enabled %}
-                            {% if visualselector_data_is_ready %}
-                                <div id="selector-header">
-                                    <a id="clear-selector" class="pure-button button-secondary button-xsmall" style="font-size: 70%">Clear selection</a>
-                                    <i class="fetching-update-notice" style="font-size: 80%;">One moment, fetching screenshot and element information..</i>
-                                </div>
-                                <div id="selector-wrapper">
-                                    <!-- request the screenshot and get the element offset info ready -->
-                                    <!-- use img src ready load to know everything is ready to map out -->
-                                    <!-- @todo: maybe something interesting like a field to select 'elements that contain text... and their parents n' -->
-                                    <img id="selector-background" />
-                                    <canvas id="selector-canvas"></canvas>
-
-                                </div>
-                                <div id="selector-current-xpath" style="overflow-x: hidden"><strong>Currently:</strong>&nbsp;<span class="text">Loading...</span></div>
-
                             <span class="pure-form-message-inline">
-                                <p><span style="font-weight: bold">Beta!</span> The Visual Selector is new and there may be minor bugs, please report pages that dont work, help us to improve this software!</p>
+                                The Visual Selector tool lets you select the <i>text</i> elements that will be used for the change detection &dash; after the <i>Browser Steps</i> has completed.<br/><br/>
                             </span>
 
-                            {% else %}
-                                <span class="pure-form-message-inline">Screenshot and element data is not available or not yet ready.</span>
-                            {% endif %}
+                            <div id="selector-header">
+                                <a id="clear-selector" class="pure-button button-secondary button-xsmall" style="font-size: 70%">Clear selection</a>
+                                <i class="fetching-update-notice" style="font-size: 80%;">One moment, fetching screenshot and element information..</i>
+                            </div>
+                            <div id="selector-wrapper" style="display: none">
+                                <!-- request the screenshot and get the element offset info ready -->
+                                <!-- use img src ready load to know everything is ready to map out -->
+                                <!-- @todo: maybe something interesting like a field to select 'elements that contain text... and their parents n' -->
+                                <img id="selector-background" />
+                                <canvas id="selector-canvas"></canvas>
+                            </div>
+                            <div id="selector-current-xpath" style="overflow-x: hidden"><strong>Currently:</strong>&nbsp;<span class="text">Loading...</span></div>
                         {% else %}
                             <span class="pure-form-message-inline">
                                 <p>Sorry, this functionality only works with Playwright/Chrome enabled watches.</p>
                                 <p>Enable the Playwright Chrome fetcher, or alternatively try our <a href="https://lemonade.changedetection.io/start">very affordable subscription based service</a>.</p>
                                 <p>This is because Selenium/WebDriver can not extract full page screenshots reliably.</p>
-
                             </span>
                         {% endif %}
                     </div>
@@ -270,9 +381,7 @@ Unavailable") }}
 
             <div id="actions">
                 <div class="pure-control-group">
-
-                      {{ render_button(form.save_button) }} {{ render_button(form.save_and_preview_button) }}
-
+                    {{ render_button(form.save_button) }}
                     <a href="{{url_for('form_delete', uuid=uuid)}}"
                        class="pure-button button-small button-error ">Delete</a>
                     <a href="{{url_for('clear_watch_history', uuid=uuid)}}"

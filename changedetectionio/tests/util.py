@@ -2,6 +2,8 @@
 
 from flask import make_response, request
 from flask import url_for
+import logging
+import time
 
 def set_original_response():
     test_return_data = """<html>
@@ -68,6 +70,32 @@ def extract_api_key_from_UI(client):
     api_key = m.group(1)
     return api_key.strip()
 
+
+# kinda funky, but works for now
+def extract_UUID_from_client(client):
+    import re
+    res = client.get(
+        url_for("index"),
+    )
+    # <span id="api-key">{{api_key}}</span>
+
+    m = re.search('edit/(.+?)"', str(res.data))
+    uuid = m.group(1)
+    return uuid.strip()
+
+def wait_for_all_checks(client):
+    # Loop waiting until done..
+    attempt=0
+    time.sleep(0.1)
+    while attempt < 60:
+        time.sleep(1)
+        res = client.get(url_for("index"))
+        if not b'Checking now' in res.data:
+            break
+        logging.getLogger().info("Waiting for watch-list to not say 'Checking now'.. {}".format(attempt))
+
+        attempt += 1
+
 def live_server_setup(live_server):
 
     @live_server.app.route('/test-endpoint')
@@ -121,6 +149,9 @@ def live_server_setup(live_server):
             if data != None:
                 f.write(data)
 
+        with open("test-datastore/notification-url.txt", "w") as f:
+            f.write(request.url)
+
         print("\n>> Test notification endpoint was hit.\n", data)
         return "Text was set"
 
@@ -132,4 +163,20 @@ def live_server_setup(live_server):
         ret = " ".join([auth.username, auth.password, auth.type])
         return ret
 
+    # Just return some GET var
+    @live_server.app.route('/test-return-query', methods=['GET'])
+    def test_return_query():
+        return request.query_string
+
+
+    @live_server.app.route('/endpoint-test.pdf')
+    def test_pdf_endpoint():
+
+        # Tried using a global var here but didn't seem to work, so reading from a file instead.
+        with open("test-datastore/endpoint-test.pdf", "rb") as f:
+            resp = make_response(f.read(), 200)
+            resp.headers['Content-Type'] = 'application/pdf'
+            return resp
+
     live_server.start()
+

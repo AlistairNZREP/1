@@ -1,5 +1,7 @@
 import apprise
+from jinja2 import Environment, BaseLoader
 from apprise import NotifyFormat
+import json
 
 valid_tokens = {
     'base_url': '',
@@ -14,44 +16,89 @@ valid_tokens = {
     'current_snapshot': ''
 }
 
+default_notification_format_for_watch = 'System default'
+default_notification_format = 'Text'
+default_notification_body = '{{watch_url}} had a change.\n---\n{{diff}}\n---\n'
+default_notification_title = 'ChangeDetection.io Notification - {{watch_url}}'
+
 valid_notification_formats = {
     'Text': NotifyFormat.TEXT,
     'Markdown': NotifyFormat.MARKDOWN,
     'HTML': NotifyFormat.HTML,
+    # Used only for editing a watch (not for global)
+    default_notification_format_for_watch: default_notification_format_for_watch
 }
 
-default_notification_format = 'Text'
-default_notification_body = '{watch_url} had a change.\n---\n{diff}\n---\n'
-default_notification_title = 'ChangeDetection.io Notification - {watch_url}'
+# include the decorator
+from apprise.decorators import notify
+
+@notify(on="delete")
+@notify(on="deletes")
+@notify(on="get")
+@notify(on="gets")
+@notify(on="post")
+@notify(on="posts")
+@notify(on="put")
+@notify(on="puts")
+def apprise_custom_api_call_wrapper(body, title, notify_type, *args, **kwargs):
+    import requests
+    url = kwargs['meta'].get('url')
+
+    if url.startswith('post'):
+        r = requests.post
+    elif url.startswith('get'):
+        r = requests.get
+    elif url.startswith('put'):
+        r = requests.put
+    elif url.startswith('delete'):
+        r = requests.delete
+
+    url = url.replace('post://', 'http://')
+    url = url.replace('posts://', 'https://')
+    url = url.replace('put://', 'http://')
+    url = url.replace('puts://', 'https://')
+    url = url.replace('get://', 'http://')
+    url = url.replace('gets://', 'https://')
+    url = url.replace('put://', 'http://')
+    url = url.replace('puts://', 'https://')
+    url = url.replace('delete://', 'http://')
+    url = url.replace('deletes://', 'https://')
+
+    # Try to auto-guess if it's JSON
+    headers = {}
+    try:
+        json.loads(body)
+        headers = {'Content-Type': 'application/json; charset=utf-8'}
+    except ValueError as e:
+        pass
+
+
+    r(url, headers=headers, data=body)
+
 
 def process_notification(n_object, datastore):
-
-    # Get the notification body from datastore
-    n_body = n_object.get('notification_body', default_notification_body)
-    n_title = n_object.get('notification_title', default_notification_title)
-    n_format = valid_notification_formats.get(
-        n_object['notification_format'],
-        valid_notification_formats[default_notification_format],
-    )
-
 
     # Insert variables into the notification content
     notification_parameters = create_notification_parameters(n_object, datastore)
 
-    for n_k in notification_parameters:
-        token = '{' + n_k + '}'
-        val = notification_parameters[n_k]
-        n_title = n_title.replace(token, val)
-        n_body = n_body.replace(token, val)
-
+    # Get the notification body from datastore
+    jinja2_env = Environment(loader=BaseLoader)
+    n_body = jinja2_env.from_string(n_object.get('notification_body', default_notification_body)).render(**notification_parameters)
+    n_title = jinja2_env.from_string(n_object.get('notification_title', default_notification_title)).render(**notification_parameters)
+    n_format = valid_notification_formats.get(
+        n_object['notification_format'],
+        valid_notification_formats[default_notification_format],
+    )
+    
     # https://github.com/caronc/apprise/wiki/Development_LogCapture
     # Anything higher than or equal to WARNING (which covers things like Connection errors)
     # raise it as an exception
     apobjs=[]
     sent_objs=[]
+    from .apprise_asset import asset
     for url in n_object['notification_urls']:
-
-        apobj = apprise.Apprise(debug=True)
+        url = jinja2_env.from_string(url).render(**notification_parameters)
+        apobj = apprise.Apprise(debug=True, asset=asset)
         url = url.strip()
         if len(url):
             print(">> Process Notification: AppRise notifying {}".format(url))
@@ -64,7 +111,12 @@ def process_notification(n_object, datastore):
 
                 # So if no avatar_url is specified, add one so it can be correctly calculated into the total payload
                 k = '?' if not '?' in url else '&'
-                if not 'avatar_url' in url:
+                if not 'avatar_url' in url \
+                        and not url.startswith('mail') \
+                        and not url.startswith('post') \
+                        and not url.startswith('get') \
+                        and not url.startswith('delete') \
+                        and not url.startswith('put'):
                     url += k + 'avatar_url=https://raw.githubusercontent.com/dgtlmoon/changedetection.io/master/changedetectionio/static/images/avatar-256x256.png'
 
                 if url.startswith('tgram://'):
@@ -79,19 +131,30 @@ def process_notification(n_object, datastore):
                     n_title = n_title[0:payload_max_size]
                     n_body = n_body[0:body_limit]
 
-                elif url.startswith('discord://'):
+                elif url.startswith('discord://') or url.startswith('https://discordapp.com/api/webhooks') or url.startswith('https://discord.com/api'):
                     # real limit is 2000, but minus some for extra metadata
                     payload_max_size = 1700
                     body_limit = max(0, payload_max_size - len(n_title))
                     n_title = n_title[0:payload_max_size]
                     n_body = n_body[0:body_limit]
 
+                elif url.startswith('mailto'):
+                    # Apprise will default to HTML, so we need to override it
+                    # So that whats' generated in n_body is in line with what is going to be sent.
+                    # https://github.com/caronc/apprise/issues/633#issuecomment-1191449321
+                    if not 'format=' in url and (n_format == 'text' or n_format == 'markdown'):
+                        prefix = '?' if not '?' in url else '&'
+                        url = "{}{}format={}".format(url, prefix, n_format)
+
                 apobj.add(url)
 
                 apobj.notify(
                     title=n_title,
                     body=n_body,
-                    body_format=n_format)
+                    body_format=n_format,
+                    # False is not an option for AppRise, must be type None
+                    attach=n_object.get('screenshot', None)
+                )
 
                 apobj.clear()
 
@@ -131,7 +194,7 @@ def create_notification_parameters(n_object, datastore):
 
     watch_url = n_object['watch_url']
 
-    # Re #148 - Some people have just {base_url} in the body or title, but this may break some notification services
+    # Re #148 - Some people have just {{ base_url }} in the body or title, but this may break some notification services
     #           like 'Join', so it's always best to atleast set something obvious so that they are not broken.
     if base_url == '':
         base_url = "<base-url-env-var-not-set>"

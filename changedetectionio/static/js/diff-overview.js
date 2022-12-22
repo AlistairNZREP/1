@@ -10,7 +10,15 @@ $(document).ready(function () {
         if (hash_name === '#screenshot') {
             $("img#screenshot-img").attr('src', screenshot_url);
             $("#settings").hide();
-        } else {
+        } else if (hash_name === '#error-screenshot') {
+            $("img#error-screenshot-img").attr('src', error_screenshot_url);
+            $("#settings").hide();
+        } else if (hash_name === '#extract') {
+            $("#settings").hide();
+        }
+
+
+        else {
             $("#settings").show();
         }
     }
