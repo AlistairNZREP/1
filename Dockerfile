@@ -61,13 +61,17 @@ EXPOSE 5000
 
 # The entrypoint script handling PUID/PGID and permissions
 COPY docker-entrypoint.sh /app/docker-entrypoint.sh
-RUN chmod 777 /app/docker-entrypoint.sh
 
 # The actual flask app
 COPY changedetectionio /app/changedetectionio
 
 # The eventlet server wrapper
 COPY changedetection.py /app/changedetection.py
+
+RUN chmod 777 /app/docker-entrypoint.sh && \
+    # create test directory for pytest to run in
+    mkdir -p /app/changedetectionio/test-datastore && \
+    chown changedetection:changedetection /app/changedetectionio/test-datastore
 
 WORKDIR /app
 
