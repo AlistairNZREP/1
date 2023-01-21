@@ -35,10 +35,12 @@ def main():
     host = ''
     port = os.environ.get('PORT') or 5000
     do_cleanup = False
-    datastore_path = None
+    datastore_path = os.environ.get('DATASTORE_PATH')
 
+    if datastore_path is not None:
+        pass
     # On Windows, create and use a default path.
-    if os.name == 'nt':
+    elif os.name == 'nt':
         datastore_path = os.path.expandvars(r'%APPDATA%\changedetection.io')
         os.makedirs(datastore_path, exist_ok=True)
     else:
